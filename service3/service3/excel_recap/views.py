@@ -120,37 +120,37 @@ from .remote_auth import RemoteJWTAuthentication
 
 
 #ancien upload
-class ExcelUploadView(APIView):
-    authentication_classes = [RemoteJWTAuthentication]
-    permission_classes = [IsAgent]
+# class ExcelUploadView(APIView):
+#     authentication_classes = [RemoteJWTAuthentication]
+#     permission_classes = [IsAgent]
 
-    def post(self, request):
-        serializer = ExcelFileSerializer(data=request.data)
+#     def post(self, request):
+#         serializer = ExcelFileSerializer(data=request.data)
 
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=400)
+#         if not serializer.is_valid():
+#             return Response(serializer.errors, status=400)
 
-        file = serializer.validated_data['file']
+#         file = serializer.validated_data['file']
 
-        if not file.name.endswith(('.xlsx', '.xls')):
-            return Response({'error': 'Only Excel files allowed'}, status=400)
+#         if not file.name.endswith(('.xlsx', '.xls')):
+#             return Response({'error': 'Only Excel files allowed'}, status=400)
 
-        upload = ExcelUpload.objects.create(file_name=file.name, status='pending')
+#         upload = ExcelUpload.objects.create(file_name=file.name, status='pending')
 
-        try:
-            count = parse_excel(file, upload)
-            upload.status = 'processed'
-            upload.save()
+#         try:
+#             count = parse_excel(file, upload)
+#             upload.status = 'processed'
+#             upload.save()
 
-            return Response({
-                'message': f'{count} records imported',
-                'upload_id': upload.id
-            }, status=201)
+#             return Response({
+#                 'message': f'{count} records imported',
+#                 'upload_id': upload.id
+#             }, status=201)
 
-        except Exception as e:
-            upload.status = 'failed'
-            upload.save()
-            return Response({'error': str(e)}, status=500)
+#         except Exception as e:
+#             upload.status = 'failed'
+#             upload.save()
+#             return Response({'error': str(e)}, status=500)
 
 #nouveau upload
 class ExcelUploadView(APIView):
