@@ -1,18 +1,4 @@
-# from rest_framework import serializers
-# from .models import ExcelUpload, BudgetRecord
 
-# class BudgetRecordSerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = BudgetRecord
-#         fields = '__all__'
-
-# class ExcelUploadSerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = ExcelUpload
-#         fields = ['id', 'file_name', 'uploaded_at', 'status']
-
-# class ExcelFileSerializer(serializers.Serializer):
-#     file = serializers.FileField()
 from rest_framework import serializers
 from .models import ExcelUpload, BudgetRecord
 from .mappings import REGION_MAPPING, ACTIVITE_MAPPING, get_famille_nom

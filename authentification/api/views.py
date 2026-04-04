@@ -1282,3 +1282,15 @@ def api_create_agents_excel(request):
         "created": created_agents,
         "skipped": skipped_agents
     })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def api_me(request):
+    user = request.user
+    return Response({
+        'id': user.id,
+        'email': user.email,
+        'role': getattr(user, 'role', None),
+        'nom_complet': f"{user.prenom} {user.nom}",
+        'is_active': user.is_active,
+    })
