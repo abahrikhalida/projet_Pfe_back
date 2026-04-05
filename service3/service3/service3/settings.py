@@ -40,7 +40,19 @@ INSTALLED_APPS = [
     'rest_framework',
     'excel_recap',
     'corsheaders',
+    'rest_framework.authtoken',
+    'rest_framework_simplejwt.token_blacklist',
 ]
+  
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        # 'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'excel_recap.remote_auth.RemoteJWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
@@ -76,10 +88,15 @@ WSGI_APPLICATION = 'service3.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+# database de khalida
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'service3',
+        'USER': 'root',  # Ou un autre utilisateur
+        'PASSWORD': 'khalida2003',
+        'HOST': 'localhost',
+        'PORT': '3306',  # Port par défaut de MySQL
     }
 }
 
@@ -125,4 +142,24 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:8083",
     "http://127.0.0.1:8083",
+]
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
 ]

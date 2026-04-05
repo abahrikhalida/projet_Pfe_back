@@ -1,71 +1,21 @@
-# import pandas as pd
-# from decimal import Decimal, InvalidOperation
 
-# def safe_decimal(value):
-#     try:
-#         if pd.isna(value):
-#             return None
-#         return Decimal(str(value))
-#     except (InvalidOperation, TypeError):
-#         return None
-
-# def parse_excel(file, upload_instance):
-#     from .models import BudgetRecord
-
-#     df = pd.read_excel(file, skiprows=2, header=None)
-
-#     records = []
-#     for _, row in df.iterrows():
-#         if len(row) < 6:
-#             continue
-#         record = BudgetRecord(
-#             upload=upload_instance,
-#             activite=str(row.iloc[0]) if pd.notna(row.iloc[0]) else None,
-#             region=str(row.iloc[1]) if pd.notna(row.iloc[1]) else None,
-#             perm=str(row.iloc[2]) if pd.notna(row.iloc[2]) else None,
-#             famille=str(row.iloc[3]) if pd.notna(row.iloc[3]) else None,
-#             code_division=str(row.iloc[4]) if pd.notna(row.iloc[4]) else None,
-#             libelle=str(row.iloc[5]) if pd.notna(row.iloc[5]) else None,
-#             credit_initial_total=safe_decimal(row.iloc[6]) if len(row) > 6 else None,
-#             credit_initial_dont_dex=safe_decimal(row.iloc[7]) if len(row) > 7 else None,
-#             realisation_cumul_total=safe_decimal(row.iloc[8]) if len(row) > 8 else None,
-#             realisation_cumul_dont_dex=safe_decimal(row.iloc[9]) if len(row) > 9 else None,
-#             real_s1_total=safe_decimal(row.iloc[10]) if len(row) > 10 else None,
-#             real_s1_dont_dex=safe_decimal(row.iloc[11]) if len(row) > 11 else None,
-#             prev_s2_total=safe_decimal(row.iloc[12]) if len(row) > 12 else None,
-#             prev_s2_dont_dex=safe_decimal(row.iloc[13]) if len(row) > 13 else None,
-#             prev_cloture_total=safe_decimal(row.iloc[14]) if len(row) > 14 else None,
-#             prev_2016_total=safe_decimal(row.iloc[16]) if len(row) > 16 else None,
-#             reste_a_realiser_total=safe_decimal(row.iloc[18]) if len(row) > 18 else None,
-#             prev_2017_total=safe_decimal(row.iloc[20]) if len(row) > 20 else None,
-#             prev_2018_total=safe_decimal(row.iloc[22]) if len(row) > 22 else None,
-#             prev_2019_total=safe_decimal(row.iloc[24]) if len(row) > 24 else None,
-#             janvier_total=safe_decimal(row.iloc[26]) if len(row) > 26 else None,
-#             fevrier_total=safe_decimal(row.iloc[28]) if len(row) > 28 else None,
-#             mars_total=safe_decimal(row.iloc[30]) if len(row) > 30 else None,
-#             avril_total=safe_decimal(row.iloc[32]) if len(row) > 32 else None,
-#             mai_total=safe_decimal(row.iloc[34]) if len(row) > 34 else None,
-#             juin_total=safe_decimal(row.iloc[36]) if len(row) > 36 else None,
-#             juillet_total=safe_decimal(row.iloc[38]) if len(row) > 38 else None,
-#             aout_total=safe_decimal(row.iloc[40]) if len(row) > 40 else None,
-#             septembre_total=safe_decimal(row.iloc[42]) if len(row) > 42 else None,
-#             octobre_total=safe_decimal(row.iloc[44]) if len(row) > 44 else None,
-#             novembre_total=safe_decimal(row.iloc[46]) if len(row) > 46 else None,
-#             decembre_total=safe_decimal(row.iloc[48]) if len(row) > 48 else None,
-#         )
-#         records.append(record)
-
-#     BudgetRecord.objects.bulk_create(records)
-#     return len(records)
 import pandas as pd
 from decimal import Decimal, InvalidOperation
+
+from .models import BudgetRecord
+
 
 def safe_decimal(value):
     try:
         if pd.isna(value):
             return None
-        return Decimal(str(value))
-    except (InvalidOperation, TypeError):
+        # Si c'est une string non numérique → None
+        if isinstance(value, str):
+            value = value.strip().replace(' ', '').replace(',', '.')
+            if not value or not value.replace('.', '').replace('-', '').isdigit():
+                return None
+        return Decimal(str(round(float(value))))
+    except (InvalidOperation, TypeError, ValueError):
         return None
 
 def parse_excel(file, upload_instance):
@@ -157,3 +107,96 @@ def parse_excel(file, upload_instance):
 
     BudgetRecord.objects.bulk_create(records)
     return len(records)
+
+def auto_correct_records(qs):
+    """
+    Corrige automatiquement les records selon les 4 règles métier.
+    Retourne le nombre de records corrigés et le détail.
+    """
+    TOLERANCE = 1
+    corrected = []
+
+    def val(x):
+        return float(x or 0)
+
+    for record in qs:
+        changed = False
+
+        # ── RÈGLE 1 : Prév.Clôture N = Réal.S1 + Prév.S2 ──────────────
+        # On recalcule prev_cloture depuis les composantes (plus fiables)
+        calc_cloture_total = val(record.real_s1_n_total) + val(record.prev_s2_n_total)
+        if abs(calc_cloture_total - val(record.prev_cloture_n_total)) > TOLERANCE:
+            record.prev_cloture_n_total = round(calc_cloture_total, 2)
+            changed = True
+
+        calc_cloture_dex = val(record.real_s1_n_dont_dex) + val(record.prev_s2_n_dont_dex)
+        if abs(calc_cloture_dex - val(record.prev_cloture_n_dont_dex)) > TOLERANCE:
+            record.prev_cloture_n_dont_dex = round(calc_cloture_dex, 2)
+            changed = True
+
+        # ── RÈGLE 2 : Reste à Réaliser = N+2 + N+3 + N+4 + N+5 ─────────
+        calc_rar_total = (
+            val(record.prev_n_plus2_total) + val(record.prev_n_plus3_total)
+            + val(record.prev_n_plus4_total) + val(record.prev_n_plus5_total)
+        )
+        if abs(calc_rar_total - val(record.reste_a_realiser_total)) > TOLERANCE:
+            record.reste_a_realiser_total = round(calc_rar_total, 2)
+            changed = True
+
+        calc_rar_dex = (
+            val(record.prev_n_plus2_dont_dex) + val(record.prev_n_plus3_dont_dex)
+            + val(record.prev_n_plus4_dont_dex) + val(record.prev_n_plus5_dont_dex)
+        )
+        if abs(calc_rar_dex - val(record.reste_a_realiser_dont_dex)) > TOLERANCE:
+            record.reste_a_realiser_dont_dex = round(calc_rar_dex, 2)
+            changed = True
+
+        # ── RÈGLE 3 : Prév.N+1 = Somme des 12 mois ──────────────────────
+        somme_mois = (
+            val(record.janvier_total)   + val(record.fevrier_total)  +
+            val(record.mars_total)      + val(record.avril_total)    +
+            val(record.mai_total)       + val(record.juin_total)     +
+            val(record.juillet_total)   + val(record.aout_total)     +
+            val(record.septembre_total) + val(record.octobre_total)  +
+            val(record.novembre_total)  + val(record.decembre_total)
+        )
+        if abs(somme_mois - val(record.prev_n_plus1_total)) > TOLERANCE:
+            record.prev_n_plus1_total = round(somme_mois, 2)
+            changed = True
+
+        # ── RÈGLE 4 : Coût Global = Réal.Cumul N-1 + Clôture N + N+1 + RAR ──
+        # On recalcule après les corrections précédentes (ordre important !)
+        calc_cout_total = (
+            val(record.realisation_cumul_n_mins1_total)
+            + val(record.prev_cloture_n_total)   # déjà corrigé si besoin
+            + val(record.prev_n_plus1_total)      # déjà corrigé si besoin
+            + val(record.reste_a_realiser_total)  # déjà corrigé si besoin
+        )
+        if abs(calc_cout_total - val(record.cout_initial_total)) > TOLERANCE:
+            record.cout_initial_total = round(calc_cout_total, 2)
+            changed = True
+
+        calc_cout_dex = (
+            val(record.realisation_cumul_n_mins1_dont_dex)
+            + val(record.prev_cloture_n_dont_dex)
+            + val(record.prev_n_plus1_dont_dex)
+            + val(record.reste_a_realiser_dont_dex)
+        )
+        if abs(calc_cout_dex - val(record.cout_initial_dont_dex)) > TOLERANCE:
+            record.cout_initial_dont_dex = round(calc_cout_dex, 2)
+            changed = True
+
+        if changed:
+            corrected.append(record)
+
+    # Bulk update uniquement les records modifiés
+    if corrected:
+        FIELDS_TO_UPDATE = [
+            'prev_cloture_n_total', 'prev_cloture_n_dont_dex',
+            'reste_a_realiser_total', 'reste_a_realiser_dont_dex',
+            'prev_n_plus1_total',
+            'cout_initial_total', 'cout_initial_dont_dex',
+        ]
+        BudgetRecord.objects.bulk_update(corrected, FIELDS_TO_UPDATE)
+
+    return len(corrected)

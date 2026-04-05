@@ -17,7 +17,7 @@ class BudgetRecord(models.Model):
     upload = models.ForeignKey(ExcelUpload, on_delete=models.CASCADE, related_name='records')
     activite = models.CharField(max_length=10, blank=True, null=True)
     region = models.CharField(max_length=10, blank=True, null=True)
-    perm = models.CharField(max_length=10, blank=True, null=True)
+    perm = models.CharField(max_length=255, blank=True, null=True)
     famille = models.CharField(max_length=50, blank=True, null=True)
     code_division = models.CharField(max_length=50, blank=True, null=True)
     libelle = models.CharField(max_length=255, blank=True, null=True)
