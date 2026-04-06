@@ -1,9 +1,6 @@
 # Framework principal
-<<<<<<< HEAD
 Django>=5.0,<6.0
-=======
 Django>=6.0,<7.0
->>>>>>> 58111806beb1bf06ca9d04942403a7d67830532e
 
 # API REST
 djangorestframework>=3.14,<4.0
@@ -17,7 +14,6 @@ Pillow>=10.0,<11.0
 
 # Cloudinary pour hébergement médias
 cloudinary>=1.39,<2.0
-<<<<<<< HEAD
 django-cloudinary-storage==0.3.0
 
 # Excel
@@ -31,7 +27,6 @@ py-eureka-client==0.11.8
 
 # CORS
 django-cors-headers>=4.0
-=======
 django-cloudinary-storage==0.3.0      
 #excel
 openpyxl>=3.1
@@ -41,4 +36,3 @@ django-cors-headers
 pandas>=2.0
 reportlab>=4.0
 xmltodict
->>>>>>> 58111806beb1bf06ca9d04942403a7d67830532e
