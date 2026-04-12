@@ -35,14 +35,22 @@ class IsDirecteur(BasePermission):
 
 class IsVisionnaire(BasePermission):
     def has_permission(self, request, view):
-        return get_role(request.user) in ('directeur', 'visionnaire')
+        return get_role(request.user) in ('directeur', 'divisionnaire')
 
 
 class IsChef(BasePermission):
     def has_permission(self, request, view):
-        return get_role(request.user) in ('directeur', 'visionnaire', 'chef')
+        return get_role(request.user) in ('directeur', 'divisionnaire', 'chef')
 
 
 class IsAgent(BasePermission):
     def has_permission(self, request, view):
-        return get_role(request.user) in ('directeur', 'visionnaire', 'chef', 'agent')
+        return get_role(request.user) in ('directeur', 'divisionnaire', 'chef', 'agent')
+
+class IsResponsableStructure(BasePermission):
+    def has_permission(self, request, view):
+        return (
+            request.user
+            and request.user.is_authenticated
+            and getattr(request.user, 'role', None) == 'responsable_structure'
+        )

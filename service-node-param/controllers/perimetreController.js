@@ -166,3 +166,45 @@ exports.deletePerimetre = async (req, res) => {
         });
     }
 };
+// @desc    Get perimetre by ID
+// @route   GET /api/perimetres/id/:id
+// @access  Private
+exports.getPerimetreById = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const perimetre = await Perimetre.findOne({
+            _id: id,
+            is_active: true
+        });
+
+        if (!perimetre) {
+            return res.status(404).json({
+                success: false,
+                message: 'Perimetre not found'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: perimetre
+        });
+
+    } catch (error) {
+        console.error('Get perimetre by ID error:', error);
+
+        // 🔥 Gestion erreur ObjectId invalide
+        if (error.name === 'CastError') {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid perimetre ID'
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching perimetre',
+            error: error.message
+        });
+    }
+};
