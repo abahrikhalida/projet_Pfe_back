@@ -43,6 +43,8 @@ urlpatterns = [
     path('users/<int:user_id>/', views.api_get_user, name='api_get_user'), 
     path('users/<int:user_id>/update/', views.api_update_user, name='api_update_user'),
     path('users/<int:user_id>/delete/', views.api_delete_user, name='api_delete_user'),  
+    path('users/<int:user_id>/affecter-region/',    views.api_affecter_region,    name='affecter-region'),
+    path('users/<int:user_id>/affecter-structure/', views.api_affecter_structure, name='affecter-structure'),
 
 
     # Agents

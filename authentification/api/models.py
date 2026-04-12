@@ -5,6 +5,7 @@ from django.utils.crypto import get_random_string
 from django.core.mail import send_mail
 from django.conf import settings
 from cloudinary.models import CloudinaryField
+from jsonschema import ValidationError
 
 
 # ===============================
@@ -32,43 +33,119 @@ class CustomUserManager(BaseUserManager):
 # ===============================
 # USER MODEL
 # ===============================
+# ancien model de user 
+# class User(AbstractBaseUser, PermissionsMixin):
+
+#     ROLE_CHOICES = [
+#         ('admin', 'Admin'),
+#         ('directeur', 'Directeur'),
+#         ('visionnaire', 'Visionnaire'),
+#         ('chef', 'Chef Departement'),
+#         ('agent', 'Agent'),
+#     ]
+
+#     email = models.EmailField(unique=True)
+#     nom = models.CharField(max_length=50)
+#     prenom = models.CharField(max_length=50)
+#     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+#     photo_profil = CloudinaryField('image', blank=True, null=True)
+
+#     is_active = models.BooleanField(default=True)
+#     is_staff = models.BooleanField(default=False)
+#     is_superuser = models.BooleanField(default=False)
+
+#     groups = models.ManyToManyField(Group, related_name="custom_user_groups", blank=True)
+#     user_permissions = models.ManyToManyField(Permission, related_name="custom_user_permissions", blank=True)
+
+#     objects = CustomUserManager()
+
+#     USERNAME_FIELD = 'email'
+#     REQUIRED_FIELDS = ['nom', 'prenom']
+
+#     def __str__(self):
+#         return f"{self.nom} {self.prenom} ({self.role})"
+
+#     def has_perm(self, perm, obj=None):
+#         return self.is_superuser
+
+#     def has_module_perms(self, app_label):
+#         return self.is_superuser
+
+
+#new model user 
+# ===============================
+# USER MODEL — champs région/structure
+# ===============================
 class User(AbstractBaseUser, PermissionsMixin):
 
     ROLE_CHOICES = [
-        ('admin', 'Admin'),
-        ('directeur', 'Directeur'),
-        ('visionnaire', 'Visionnaire'),
-        ('chef', 'Chef Departement'),
-        ('agent', 'Agent'),
+        ('admin',                 'Admin'),
+        ('chef',                  'Chef'),
+        ('directeur',             'Directeur'),
+        ('directeur_region',      'Directeur de Région'),
+        ('responsable_structure', 'Responsable de Structure'),
+        ('divisionnaire',         'Divisionnaire'),
+        ('agent',                 'Agent'),
     ]
 
-    email = models.EmailField(unique=True)
-    nom = models.CharField(max_length=50)
-    prenom = models.CharField(max_length=50)
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    email        = models.EmailField(unique=True)
+    nom          = models.CharField(max_length=50)
+    prenom       = models.CharField(max_length=50)
+    role         = models.CharField(max_length=30, choices=ROLE_CHOICES)
     photo_profil = CloudinaryField('image', blank=True, null=True)
 
-    is_active = models.BooleanField(default=True)
-    is_staff = models.BooleanField(default=False)
+    # IDs MongoDB — pas de ForeignKey, juste des références externes
+    region_id    = models.CharField(max_length=24, blank=True, null=True)  # ObjectId MongoDB
+    structure_id = models.CharField(max_length=24, blank=True, null=True)  # ObjectId MongoDB
+
+    is_active    = models.BooleanField(default=True)
+    is_staff     = models.BooleanField(default=False)
     is_superuser = models.BooleanField(default=False)
 
-    groups = models.ManyToManyField(Group, related_name="custom_user_groups", blank=True)
+    groups           = models.ManyToManyField(Group, related_name="custom_user_groups", blank=True)
     user_permissions = models.ManyToManyField(Permission, related_name="custom_user_permissions", blank=True)
 
     objects = CustomUserManager()
 
-    USERNAME_FIELD = 'email'
+    USERNAME_FIELD  = 'email'
     REQUIRED_FIELDS = ['nom', 'prenom']
 
     def __str__(self):
         return f"{self.nom} {self.prenom} ({self.role})"
+
+    # def clean(self):
+    #     if self.role == 'directeur_region':
+    #         if not self.region_id:
+    #             raise ValidationError("Un directeur de région doit avoir un region_id.")
+    #         self.structure_id = None
+
+    #     elif self.role == 'responsable_structure':
+    #         if not self.structure_id:
+    #             raise ValidationError("Un responsable de structure doit avoir un structure_id.")
+    #         if not self.region_id:
+    #             raise ValidationError("Un responsable de structure doit avoir un region_id.")
+
+    #     elif self.role in ('admin', 'chef', 'directeur', 'divisionnaire', 'agent'):
+    #         self.region_id    = None
+    #         self.structure_id = None
+    def clean(self):
+        # Ne valider region/structure que si explicitement fournis
+        if self.role == 'directeur_region' and self.region_id:
+            self.structure_id = None
+
+        elif self.role == 'responsable_structure' and self.structure_id:
+            if not self.region_id:
+                raise ValidationError("Un responsable de structure doit avoir un region_id.")
+
+        elif self.role in ('admin', 'chef', 'directeur', 'divisionnaire', 'agent'):
+            self.region_id    = None
+            self.structure_id = None
 
     def has_perm(self, perm, obj=None):
         return self.is_superuser
 
     def has_module_perms(self, app_label):
         return self.is_superuser
-
 
 # ===============================
 # ADMIN MODEL

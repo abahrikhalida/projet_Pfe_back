@@ -7,7 +7,6 @@ from .models import ExcelUpload, BudgetRecord
 from .serializers import ExcelUploadSerializer, BudgetRecordSerializer, ExcelFileSerializer
 from .utils import auto_correct_records, parse_excel
 from .mappings import REGION_MAPPING, ACTIVITE_MAPPING, FAMILLE_ORDER, get_famille_nom
-
 from .discovery import discover_service
 
 # External service URLs
@@ -31,7 +30,24 @@ def get_service1_url():
         return f"http://{host}:{port}"
     except Exception as e:
         print("Error resolving service1 from Eureka:", e)
-        return "http://localhost:8000"  # Fallback
+        return "http://localhost:8001"  # Fallback
+    
+def get_service_param_url():
+    """Découverte du SERVICE-NODE-PARAM via Eureka"""
+    try:
+        res = requests.get(
+            "http://registry:8761/eureka/apps/SERVICE-NODE-PARAM",
+            headers={'Accept': 'application/json'},
+            timeout=5
+        )
+        instances = res.json()['application']['instance']
+        instance = instances[0] if isinstance(instances, list) else instances
+        host = instance['hostName']
+        port = instance['port']['$']
+        return f"http://{host}:{port}"
+    except Exception as e:
+        print("Error resolving SERVICE-NODE-PARAM from Eureka:", e)
+        return "http://localhost:8083"  
 
 NUMERIC_FIELDS = [
     'cout_initial_total', 'cout_initial_dont_dex',
@@ -49,6 +65,53 @@ NUMERIC_FIELDS = [
     'avril_total', 'mai_total', 'juin_total',
     'juillet_total', 'aout_total', 'septembre_total',
     'octobre_total', 'novembre_total', 'decembre_total',
+]
+
+PREVISION_FIELDS = [
+    'prev_s2_n_total', 'prev_s2_n_dont_dex',
+    'prev_cloture_n_total', 'prev_cloture_n_dont_dex',
+    'prev_n_plus1_total', 'prev_n_plus1_dont_dex',
+    'reste_a_realiser_total', 'reste_a_realiser_dont_dex',
+    'prev_n_plus2_total', 'prev_n_plus2_dont_dex',
+    'prev_n_plus3_total', 'prev_n_plus3_dont_dex',
+    'prev_n_plus4_total', 'prev_n_plus4_dont_dex',
+    'prev_n_plus5_total', 'prev_n_plus5_dont_dex',
+]
+
+SAISIE_FIELDS = [
+    'cout_initial_total', 'cout_initial_dont_dex',
+    'realisation_cumul_n_mins1_total', 'realisation_cumul_n_mins1_dont_dex',
+    'real_s1_n_total', 'real_s1_n_dont_dex',
+    'janvier_total', 'janvier_dont_dex',
+    'fevrier_total', 'fevrier_dont_dex',
+    'mars_total', 'mars_dont_dex',
+    'avril_total', 'avril_dont_dex',
+    'mai_total', 'mai_dont_dex',
+    'juin_total', 'juin_dont_dex',
+    'juillet_total', 'juillet_dont_dex',
+    'aout_total', 'aout_dont_dex',
+    'septembre_total', 'septembre_dont_dex',
+    'octobre_total', 'octobre_dont_dex',
+    'novembre_total', 'novembre_dont_dex',
+    'decembre_total', 'decembre_dont_dex',
+]
+
+TOTAL_DONT_DEX_PAIRS = [
+    ('cout_initial_total',              'cout_initial_dont_dex'),
+    ('realisation_cumul_n_mins1_total', 'realisation_cumul_n_mins1_dont_dex'),
+    ('real_s1_n_total',                 'real_s1_n_dont_dex'),
+    ('janvier_total',                   'janvier_dont_dex'),
+    ('fevrier_total',                   'fevrier_dont_dex'),
+    ('mars_total',                      'mars_dont_dex'),
+    ('avril_total',                     'avril_dont_dex'),
+    ('mai_total',                       'mai_dont_dex'),
+    ('juin_total',                      'juin_dont_dex'),
+    ('juillet_total',                   'juillet_dont_dex'),
+    ('aout_total',                      'aout_dont_dex'),
+    ('septembre_total',                 'septembre_dont_dex'),
+    ('octobre_total',                   'octobre_dont_dex'),
+    ('novembre_total',                  'novembre_dont_dex'),
+    ('decembre_total',                  'decembre_dont_dex'),
 ]
 
 REGION_EXCLUSIONS   = [None, '', 'Région', 'REGION', 'region', 'Total', 'TOTAL']
@@ -115,7 +178,7 @@ def group_by_famille(data):
 # UPLOAD
 # ─────────────────────────────────────────
 from rest_framework.permissions import IsAuthenticated
-from .permissions import IsDirecteur, IsVisionnaire, IsChef, IsAgent
+from .permissions import *
 from .remote_auth import RemoteJWTAuthentication
 
 
@@ -836,4 +899,553 @@ class VerificationCalculsView(APIView):
                 'total_erreurs':  len(errors),
             },
             'erreurs': errors,
+        })
+    # ─────────────────────────────────────────
+# SAISIE MANUELLE — NOUVEAU PROJET
+# ─────────────────────────────────────────
+
+class CreateBudgetRecordManuelView(APIView):
+    """
+    POST /api/budget/nouveau-projet/
+
+    Création manuelle d'un BudgetRecord (nouveau projet)
+    par le responsable structure uniquement.
+
+    Règles :
+    - region_id vient du TOKEN → nom_region résolu via SERVICE-NODE-PARAM
+    - perimetre doit exister dans la region (filtré par region_id ObjectId)
+    - famille doit exister dans ce perimetre de la region
+    - total >= dont_dex pour chaque paire de champs
+    - champs prévisions laissés vides (non saisissables)
+    """
+    authentication_classes = [RemoteJWTAuthentication]
+    permission_classes = [IsResponsableStructure]
+
+    def post(self, request):
+        data = request.data
+        errors = {}
+
+        # ── 1. region_id + structure_id depuis le TOKEN ──
+        region_id    = getattr(request.user, 'region_id', None)
+        structure_id = getattr(request.user, 'structure_id', None)
+
+        # Fallback body seulement si pas dans le token
+        if not region_id:
+            region_id = data.get('region_id')
+        if not structure_id:
+            structure_id = data.get('structure_id')
+
+        if not region_id:
+            return Response({'error': 'region_id introuvable dans le token'}, status=400)
+        if not structure_id:
+            return Response({'error': 'structure_id introuvable dans le token'}, status=400)
+
+        # ── 2. Champs obligatoires ──
+        activite       = data.get('activite')
+        perimetre_code = data.get('perimetre')
+        famille_code   = data.get('famille')
+        code_division  = data.get('code_division')
+        libelle        = data.get('libelle')
+
+        if not activite:
+            return Response({'error': 'activite est requis'}, status=400)
+        if not perimetre_code:
+            return Response({'error': 'perimetre est requis'}, status=400)
+        if not famille_code:
+            return Response({'error': 'famille est requis'}, status=400)
+        if not code_division:
+            return Response({'error': 'code_division est requis'}, status=400)
+        if not libelle:
+            return Response({'error': 'libelle est requis'}, status=400)
+
+        service_url = get_service_param_url()
+        token = request.headers.get('Authorization', '')
+
+        # ── 3. Résolution région depuis region_id (ObjectId) ──
+        try:
+            region_resp = requests.get(
+                f"{service_url}/params/regions/id/{region_id}",
+                headers={'Authorization': token},
+                timeout=5
+            )
+
+            print("=== DEBUG REGION ===")
+            print("region_id      :", region_id)
+            print("service_url    :", service_url)
+            print("status_code    :", region_resp.status_code)
+            print("body           :", region_resp.text)
+
+            if region_resp.status_code != 200:
+                return Response({'error': 'Région introuvable'}, status=400)
+
+            region_data = region_resp.json().get('data', {})
+            code_region = region_data.get('code_region')
+            nom_region  = region_data.get('nom_region')
+
+        except Exception as e:
+            return Response({'error': f'Erreur service région: {str(e)}'}, status=503)
+
+        # ── 4. Validation périmètre — filtré par region_id (ObjectId) ──
+        try:
+            perm_resp = requests.get(
+                f"{service_url}/params/perimetres",
+                params={'region': code_region},   # ✅ ObjectId, pas code_region
+                headers={'Authorization': token},
+                timeout=5
+            )
+
+            print("=== DEBUG PERIMETRE ===")
+            print("params         :", {'region': region_id})
+            print("status_code    :", perm_resp.status_code)
+            print("body           :", perm_resp.text)
+
+            perimetres_valides = [
+                p['code_perimetre']
+                for p in perm_resp.json().get('data', [])
+            ]
+
+            print("perimetres_valides:", perimetres_valides)
+            print("perimetre_code    :", perimetre_code)
+
+            if perimetre_code not in perimetres_valides:
+                return Response({
+                    'error': f"Le périmètre '{perimetre_code}' n'existe pas dans votre région",
+                    'perimetres_disponibles': perimetres_valides
+                }, status=400)
+
+        except Exception as e:
+            return Response({'error': f'Erreur service périmètre: {str(e)}'}, status=503)
+
+        # ── 5. Validation famille — filtrée par region_id + perimetre_code ──
+        try:
+            fam_resp = requests.get(
+                f"{service_url}/params/familles",
+                params={'region': code_region, 'perimetre': perimetre_code},  # ✅ ObjectId
+                headers={'Authorization': token},
+                timeout=5
+            )
+
+            print("=== DEBUG FAMILLE ===")
+            print("params         :", {'region': region_id, 'perimetre': perimetre_code})
+            print("status_code    :", fam_resp.status_code)
+            print("body           :", fam_resp.text)
+
+            familles_valides = [
+                f['code_famille']
+                for f in fam_resp.json().get('data', [])
+            ]
+
+            print("familles_valides:", familles_valides)
+            print("famille_code    :", famille_code)
+
+            if famille_code not in familles_valides:
+                return Response({
+                    'error': f"La famille '{famille_code}' n'existe pas dans ce périmètre",
+                    'familles_disponibles': familles_valides
+                }, status=400)
+
+        except Exception as e:
+            return Response({'error': f'Erreur service famille: {str(e)}'}, status=503)
+
+        # ── 6. Validation total >= dont_dex ──
+        for total_field, dex_field in TOTAL_DONT_DEX_PAIRS:
+            total_val = data.get(total_field)
+            dex_val   = data.get(dex_field)
+            if total_val is not None and dex_val is not None:
+                if float(dex_val) > float(total_val):
+                    errors[dex_field] = (
+                        f"'{dex_field}' ({dex_val}) ne peut pas dépasser "
+                        f"'{total_field}' ({total_val})"
+                    )
+
+        if errors:
+            return Response({'errors': errors}, status=400)
+
+        # ── 7. ExcelUpload factice pour traçabilité ──
+        upload = ExcelUpload.objects.create(
+            file_name=f"saisie_manuelle_structure_{structure_id}",
+            status='processed'
+        )
+
+        # ── 8. Créer BudgetRecord ──
+        record_data = {
+            'upload':        upload,
+            'activite':      activite,
+            'region':        code_region,
+            'perm':          perimetre_code,
+            'famille':       famille_code,
+            'code_division': code_division,
+            'libelle':       libelle,
+            'annee':         int(data.get('annee')) if data.get('annee') else None,  # ✅
+        }
+
+        # Champs saisie → None si non envoyés
+        for field in SAISIE_FIELDS:
+            val = data.get(field)
+            record_data[field] = float(val) if val not in (None, '') else None
+
+        # Champs prévisions → toujours None
+        for field in PREVISION_FIELDS:
+            record_data[field] = None
+
+        record = BudgetRecord.objects.create(**record_data)
+
+        return Response({
+            'success': True,
+            'message': 'Projet créé avec succès',
+            'data': {
+                'record_id':     record.id,
+                'upload_id':     upload.id,
+                'region_code':   code_region,
+                'nom_region':    nom_region,
+                'perimetre':     perimetre_code,
+                'famille':       famille_code,
+                'code_division': code_division,
+                'libelle':       libelle,
+            }
+        }, status=201)
+# ─────────────────────────────────────────
+# GET + UPDATE BudgetRecord par code_division
+# ─────────────────────────────────────────
+
+# class BudgetRecordByCodeDivisionView(APIView):
+#     """
+#     GET  /api/budget/projet/<code_division>/  → récupérer le projet
+#     PATCH /api/budget/projet/<code_division>/ → modifier + recalcul automatique
+    
+#     Règles :
+#     - region ne peut pas être modifié
+#     - Recalcul automatique des champs dérivés après modification
+#     """
+#     authentication_classes = [RemoteJWTAuthentication]
+#     permission_classes = [IsResponsableStructure]
+
+#     # ─────────────────────────────────────────
+#     # GET
+#     # ─────────────────────────────────────────
+#     def get(self, request, code_division):
+#         try:
+#             record = BudgetRecord.objects.get(code_division=code_division)
+#         except BudgetRecord.DoesNotExist:
+#             return Response({'error': f"Projet '{code_division}' introuvable"}, status=404)
+#         except BudgetRecord.MultipleObjectsReturned:
+#             # Si plusieurs records avec le même code_division → retourner le plus récent
+#             record = BudgetRecord.objects.filter(
+#                 code_division=code_division
+#             ).order_by('-id').first()
+
+#         serializer = BudgetRecordSerializer(record)
+#         return Response({
+#             'success': True,
+#             'data': serializer.data
+#         })
+
+#     # ─────────────────────────────────────────
+#     # PATCH
+#     # ─────────────────────────────────────────
+#     def patch(self, request, code_division):
+#         try:
+#             record = BudgetRecord.objects.get(code_division=code_division)
+#         except BudgetRecord.DoesNotExist:
+#             return Response({'error': f"Projet '{code_division}' introuvable"}, status=404)
+#         except BudgetRecord.MultipleObjectsReturned:
+#             record = BudgetRecord.objects.filter(
+#                 code_division=code_division
+#             ).order_by('-id').first()
+
+#         data = request.data
+
+#         # ── 1. Région ne peut pas être modifiée ──
+#         if 'region' in data:
+#             return Response({
+#                 'error': "La région ne peut pas être modifiée"
+#             }, status=400)
+
+#         # ── 2. Validation total >= dont_dex pour les champs envoyés ──
+#         errors = {}
+#         for total_field, dex_field in TOTAL_DONT_DEX_PAIRS:
+#             # Récupérer la nouvelle valeur ou garder l'ancienne
+#             total_val = float(data.get(total_field) or getattr(record, total_field) or 0)
+#             dex_val   = float(data.get(dex_field)   or getattr(record, dex_field)   or 0)
+#             if dex_val > total_val:
+#                 errors[dex_field] = (
+#                     f"'{dex_field}' ({dex_val}) ne peut pas dépasser "
+#                     f"'{total_field}' ({total_val})"
+#                 )
+
+#         if errors:
+#             return Response({'errors': errors}, status=400)
+
+#         # ── 3. Appliquer les modifications (sauf region) ──
+#         CHAMPS_MODIFIABLES = [
+#             'activite', 'perm', 'famille', 'code_division',
+#             'libelle', 'annee',
+#         ] + SAISIE_FIELDS + PREVISION_FIELDS
+
+#         for field in CHAMPS_MODIFIABLES:
+#             if field in data:
+#                 val = data[field]
+#                 # Champs numériques
+#                 if field in SAISIE_FIELDS or field in PREVISION_FIELDS:
+#                     setattr(record, field, float(val) if val not in (None, '') else None)
+#                 else:
+#                     setattr(record, field, val)
+
+#         # ── 4. Recalcul automatique des champs dérivés ──
+
+#         def v(field):
+#             """Retourner la valeur du record ou 0."""
+#             val = getattr(record, field, None)
+#             return float(val) if val is not None else 0.0
+
+#         # RÈGLE 1 : Prév. Clôture N = Réal. S1 + Prév. S2
+#         record.prev_cloture_n_total    = v('real_s1_n_total')    + v('prev_s2_n_total')
+#         record.prev_cloture_n_dont_dex = v('real_s1_n_dont_dex') + v('prev_s2_n_dont_dex')
+
+#         # RÈGLE 2 : Reste à Réaliser = Prév N+2 + N+3 + N+4 + N+5
+#         record.reste_a_realiser_total = (
+#             v('prev_n_plus2_total') + v('prev_n_plus3_total') +
+#             v('prev_n_plus4_total') + v('prev_n_plus5_total')
+#         )
+#         record.reste_a_realiser_dont_dex = (
+#             v('prev_n_plus2_dont_dex') + v('prev_n_plus3_dont_dex') +
+#             v('prev_n_plus4_dont_dex') + v('prev_n_plus5_dont_dex')
+#         )
+
+#         # RÈGLE 3 : Prév. N+1 = Somme des 12 mois (total)
+#         record.prev_n_plus1_total = (
+#             v('janvier_total')   + v('fevrier_total')  + v('mars_total')  +
+#             v('avril_total')     + v('mai_total')      + v('juin_total')  +
+#             v('juillet_total')   + v('aout_total')     + v('septembre_total') +
+#             v('octobre_total')   + v('novembre_total') + v('decembre_total')
+#         )
+#         record.prev_n_plus1_dont_dex = (
+#             v('janvier_dont_dex')   + v('fevrier_dont_dex')  + v('mars_dont_dex')  +
+#             v('avril_dont_dex')     + v('mai_dont_dex')      + v('juin_dont_dex')  +
+#             v('juillet_dont_dex')   + v('aout_dont_dex')     + v('septembre_dont_dex') +
+#             v('octobre_dont_dex')   + v('novembre_dont_dex') + v('decembre_dont_dex')
+#         )
+
+#         # RÈGLE 4 : Coût Global = Réal.Cumul N-1 + Prév.Clôture N + Prév.N+1 + Reste à Réaliser
+#         record.cout_initial_total = (
+#             v('realisation_cumul_n_mins1_total') +
+#             v('prev_cloture_n_total') +
+#             v('prev_n_plus1_total') +
+#             v('reste_a_realiser_total')
+#         )
+#         record.cout_initial_dont_dex = (
+#             v('realisation_cumul_n_mins1_dont_dex') +
+#             v('prev_cloture_n_dont_dex') +
+#             v('prev_n_plus1_dont_dex') +
+#             v('reste_a_realiser_dont_dex')
+#         )
+
+#         # ── 5. Sauvegarder ──
+#         record.save()
+
+#         serializer = BudgetRecordSerializer(record)
+#         return Response({
+#             'success': True,
+#             'message': 'Projet mis à jour avec recalcul automatique',
+#             'recalculs': {
+#                 'prev_cloture_n_total':       record.prev_cloture_n_total,
+#                 'prev_cloture_n_dont_dex':    record.prev_cloture_n_dont_dex,
+#                 'reste_a_realiser_total':     record.reste_a_realiser_total,
+#                 'reste_a_realiser_dont_dex':  record.reste_a_realiser_dont_dex,
+#                 'prev_n_plus1_total':         record.prev_n_plus1_total,
+#                 'prev_n_plus1_dont_dex':      record.prev_n_plus1_dont_dex,
+#                 'cout_initial_total':         record.cout_initial_total,
+#                 'cout_initial_dont_dex':      record.cout_initial_dont_dex,
+#             },
+#             'data': serializer.data
+#         })
+class BudgetRecordByCodeDivisionView(APIView):
+    """
+    GET   /api/budget/projet/<code_division>/ → récupérer le projet
+    PATCH /api/budget/projet/<code_division>/ → modifier + recalcul automatique
+
+    Règles :
+    - region ne peut pas être modifié
+    - total >= dont_dex pour chaque paire (avant ET après recalcul)
+    - Recalcul automatique des champs dérivés après modification
+    """
+    authentication_classes = [RemoteJWTAuthentication]
+    permission_classes = [IsResponsableStructure]
+
+    # ─────────────────────────────────────────
+    # GET
+    # ─────────────────────────────────────────
+    def get(self, request, code_division):
+        try:
+            record = BudgetRecord.objects.get(code_division=code_division)
+        except BudgetRecord.DoesNotExist:
+            return Response({'error': f"Projet '{code_division}' introuvable"}, status=404)
+        except BudgetRecord.MultipleObjectsReturned:
+            record = BudgetRecord.objects.filter(
+                code_division=code_division
+            ).order_by('-id').first()
+
+        serializer = BudgetRecordSerializer(record)
+        return Response({
+            'success': True,
+            'data': serializer.data
+        })
+
+    # ─────────────────────────────────────────
+    # PATCH
+    # ─────────────────────────────────────────
+    def patch(self, request, code_division):
+        try:
+            record = BudgetRecord.objects.get(code_division=code_division)
+        except BudgetRecord.DoesNotExist:
+            return Response({'error': f"Projet '{code_division}' introuvable"}, status=404)
+        except BudgetRecord.MultipleObjectsReturned:
+            record = BudgetRecord.objects.filter(
+                code_division=code_division
+            ).order_by('-id').first()
+
+        data = request.data
+
+        # ── 1. Région ne peut pas être modifiée ──
+        if 'region' in data:
+            return Response({
+                'error': "La région ne peut pas être modifiée"
+            }, status=400)
+
+        # ── 2. Validation total >= dont_dex pour les champs envoyés ──
+        errors = {}
+
+        # Toutes les paires possibles (saisie + prévisions)
+        ALL_TOTAL_DEX_PAIRS = TOTAL_DONT_DEX_PAIRS + [
+            ('prev_s2_n_total',              'prev_s2_n_dont_dex'),
+            ('prev_cloture_n_total',         'prev_cloture_n_dont_dex'),
+            ('prev_n_plus1_total',           'prev_n_plus1_dont_dex'),
+            ('reste_a_realiser_total',       'reste_a_realiser_dont_dex'),
+            ('prev_n_plus2_total',           'prev_n_plus2_dont_dex'),
+            ('prev_n_plus3_total',           'prev_n_plus3_dont_dex'),
+            ('prev_n_plus4_total',           'prev_n_plus4_dont_dex'),
+            ('prev_n_plus5_total',           'prev_n_plus5_dont_dex'),
+            ('cout_initial_total',           'cout_initial_dont_dex'),
+            ('realisation_cumul_n_mins1_total', 'realisation_cumul_n_mins1_dont_dex'),
+        ]
+
+        for total_field, dex_field in ALL_TOTAL_DEX_PAIRS:
+            # Nouvelle valeur si envoyée, sinon ancienne valeur du record
+            total_val = float(data.get(total_field) if data.get(total_field) is not None
+                              else getattr(record, total_field) or 0)
+            dex_val   = float(data.get(dex_field)   if data.get(dex_field)   is not None
+                              else getattr(record, dex_field)   or 0)
+            if dex_val > total_val:
+                errors[dex_field] = (
+                    f"'{dex_field}' ({dex_val}) ne peut pas dépasser "
+                    f"'{total_field}' ({total_val})"
+                )
+
+        if errors:
+            return Response({'errors': errors}, status=400)
+
+        # ── 3. Appliquer les modifications (sauf region) ──
+        CHAMPS_MODIFIABLES = [
+            'activite', 'perm', 'famille', 'code_division',
+            'libelle', 'annee',
+        ] + SAISIE_FIELDS + PREVISION_FIELDS
+
+        for field in CHAMPS_MODIFIABLES:
+            if field in data:
+                val = data[field]
+                if field in SAISIE_FIELDS or field in PREVISION_FIELDS:
+                    setattr(record, field, float(val) if val not in (None, '') else None)
+                else:
+                    setattr(record, field, val)
+
+        # ── 4. Recalcul automatique des champs dérivés ──
+        def v(field):
+            val = getattr(record, field, None)
+            return float(val) if val is not None else 0.0
+
+        # RÈGLE 1 : Prév. Clôture N = Réal. S1 + Prév. S2
+        record.prev_cloture_n_total    = v('real_s1_n_total')    + v('prev_s2_n_total')
+        record.prev_cloture_n_dont_dex = v('real_s1_n_dont_dex') + v('prev_s2_n_dont_dex')
+
+        # RÈGLE 2 : Reste à Réaliser = Prév N+2 + N+3 + N+4 + N+5
+        record.reste_a_realiser_total = (
+            v('prev_n_plus2_total') + v('prev_n_plus3_total') +
+            v('prev_n_plus4_total') + v('prev_n_plus5_total')
+        )
+        record.reste_a_realiser_dont_dex = (
+            v('prev_n_plus2_dont_dex') + v('prev_n_plus3_dont_dex') +
+            v('prev_n_plus4_dont_dex') + v('prev_n_plus5_dont_dex')
+        )
+
+        # RÈGLE 3 : Prév. N+1 = Somme des 12 mois
+        record.prev_n_plus1_total = (
+            v('janvier_total')    + v('fevrier_total')    + v('mars_total')      +
+            v('avril_total')      + v('mai_total')        + v('juin_total')      +
+            v('juillet_total')    + v('aout_total')       + v('septembre_total') +
+            v('octobre_total')    + v('novembre_total')   + v('decembre_total')
+        )
+        record.prev_n_plus1_dont_dex = (
+            v('janvier_dont_dex')    + v('fevrier_dont_dex')    + v('mars_dont_dex')      +
+            v('avril_dont_dex')      + v('mai_dont_dex')        + v('juin_dont_dex')      +
+            v('juillet_dont_dex')    + v('aout_dont_dex')       + v('septembre_dont_dex') +
+            v('octobre_dont_dex')    + v('novembre_dont_dex')   + v('decembre_dont_dex')
+        )
+
+        # RÈGLE 4 : Coût Global = Réal.Cumul N-1 + Prév.Clôture N + Prév.N+1 + Reste à Réaliser
+        record.cout_initial_total = (
+            v('realisation_cumul_n_mins1_total') +
+            v('prev_cloture_n_total')            +
+            v('prev_n_plus1_total')              +
+            v('reste_a_realiser_total')
+        )
+        record.cout_initial_dont_dex = (
+            v('realisation_cumul_n_mins1_dont_dex') +
+            v('prev_cloture_n_dont_dex')            +
+            v('prev_n_plus1_dont_dex')              +
+            v('reste_a_realiser_dont_dex')
+        )
+
+        # ── 5. Vérification finale après recalcul — dont_dex <= total ──
+        recalcul_errors = {}
+
+        RECALCUL_PAIRS = [
+            ('prev_cloture_n_total',         'prev_cloture_n_dont_dex'),
+            ('reste_a_realiser_total',       'reste_a_realiser_dont_dex'),
+            ('prev_n_plus1_total',           'prev_n_plus1_dont_dex'),
+            ('cout_initial_total',           'cout_initial_dont_dex'),
+        ]
+
+        for total_field, dex_field in RECALCUL_PAIRS:
+            total_val = v(total_field)
+            dex_val   = v(dex_field)
+            if dex_val > total_val:
+                recalcul_errors[dex_field] = (
+                    f"Après recalcul : '{dex_field}' ({dex_val}) "
+                    f"dépasse '{total_field}' ({total_val})"
+                )
+
+        if recalcul_errors:
+            return Response({
+                'error': 'Incohérence après recalcul — vérifiez vos données',
+                'errors': recalcul_errors
+            }, status=400)
+
+        # ── 6. Sauvegarder ──
+        record.save()
+
+        serializer = BudgetRecordSerializer(record)
+        return Response({
+            'success': True,
+            'message': 'Projet mis à jour avec recalcul automatique',
+            'recalculs': {
+                'prev_cloture_n_total':      record.prev_cloture_n_total,
+                'prev_cloture_n_dont_dex':   record.prev_cloture_n_dont_dex,
+                'reste_a_realiser_total':    record.reste_a_realiser_total,
+                'reste_a_realiser_dont_dex': record.reste_a_realiser_dont_dex,
+                'prev_n_plus1_total':        record.prev_n_plus1_total,
+                'prev_n_plus1_dont_dex':     record.prev_n_plus1_dont_dex,
+                'cout_initial_total':        record.cout_initial_total,
+                'cout_initial_dont_dex':     record.cout_initial_dont_dex,
+            },
+            'data': serializer.data
         })

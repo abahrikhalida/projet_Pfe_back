@@ -631,6 +631,7 @@ from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from datetime import datetime, date, timedelta
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import openpyxl
 from .models import User, Agent
 
@@ -665,6 +666,14 @@ def api_login(request):
         )
 
     refresh = RefreshToken.for_user(user)
+    #code ajouter
+    
+    # ✅ Ajouter region_id et structure_id dans le token
+    refresh['region_id']    = str(user.region_id)    if user.region_id    else None
+    refresh['structure_id'] = str(user.structure_id) if user.structure_id else None
+    refresh['role']         = user.role
+    refresh['user_id']      = str(user.id)
+
 
     return Response({
         "status": "success",
@@ -765,37 +774,54 @@ def api_reset_password_confirm(request):
 # CREATE USER
 # ==========================
 
+# @api_view(['POST'])
+# @parser_classes([MultiPartParser, FormParser, JSONParser])
+# def api_create_user(request):
+#     data = request.data
+#     email = data.get('email')
+#     nom = data.get('nom')
+#     prenom = data.get('prenom')
+#     role = data.get('role')
+#     password = data.get('password') or get_random_string(8)
+#     photo = request.FILES.get('photo_profil')
+
+#     if not role:
+#         return Response({"status": "error", "message": "Le rôle est obligatoire"}, status=400)
+
+#     if User.objects.filter(email=email).exists():
+#         return Response({"status": "error", "message": "Email déjà existant"}, status=400)
+
+#     user = User(email=email, nom=nom, prenom=prenom, role=role, photo_profil=photo)
+#     user.set_password(password)
+#     user.save()
+
+#     return Response({
+#         "status": "success",
+#         "id": user.id,
+#         "email": user.email,
+#         "nom_complet": nom_complet(user),
+#         "role": user.role,
+#         "photo_profil": user.photo_profil.url if user.photo_profil else None,
+#         "password_generated": password if 'password' not in data else None
+#     })
+from .serializers import UserSerializer
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
 @api_view(['POST'])
-@parser_classes([MultiPartParser])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def api_create_user(request):
-    data = request.data
-    email = data.get('email')
-    nom = data.get('nom')
-    prenom = data.get('prenom')
-    role = data.get('role')
-    password = data.get('password') or get_random_string(8)
-    photo = request.FILES.get('photo_profil')
+    serializer = UserSerializer(data=request.data)
 
-    if not role:
-        return Response({"status": "error", "message": "Le rôle est obligatoire"}, status=400)
+    if serializer.is_valid():
+        user = serializer.save()
 
-    if User.objects.filter(email=email).exists():
-        return Response({"status": "error", "message": "Email déjà existant"}, status=400)
+        return Response({
+            "status": "success",
+            "user": serializer.data,
+            "generated_password": getattr(user, "generated_password", None)
+        })
 
-    user = User(email=email, nom=nom, prenom=prenom, role=role, photo_profil=photo)
-    user.set_password(password)
-    user.save()
-
-    return Response({
-        "status": "success",
-        "id": user.id,
-        "email": user.email,
-        "nom_complet": nom_complet(user),
-        "role": user.role,
-        "photo_profil": user.photo_profil.url if user.photo_profil else None,
-        "password_generated": password if 'password' not in data else None
-    })
-
+    return Response(serializer.errors, status=400)
 
 # ==========================
 # LIST USERS
@@ -847,7 +873,7 @@ def api_get_user(request, user_id):
 
 @api_view(['PUT', 'PATCH'])
 @permission_classes([IsAuthenticated])
-@parser_classes([MultiPartParser])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def api_update_user(request, user_id):
     try:
         user = User.objects.get(id=user_id)
@@ -1292,5 +1318,173 @@ def api_me(request):
         'email': user.email,
         'role': getattr(user, 'role', None),
         'nom_complet': f"{user.prenom} {user.nom}",
+        'region_id':    str(user.region_id)    if user.region_id    else None,
+        'structure_id': str(user.structure_id) if user.structure_id else None,
         'is_active': user.is_active,
+    })
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .models import User
+from .serializers import UserSerializer
+import requests
+from .discovery import discover_service
+discover_service.cache_clear()
+
+SERVICE_NAME = "SERVICE-NODE-PARAM"
+
+def get_auth_headers(request):
+    token = request.headers.get('Authorization')
+    if not token:
+        return None
+    return {"Authorization": token}
+
+@api_view(['PATCH'])
+def api_affecter_region(request, user_id):
+
+    # 🔒 Vérifier rôle
+    #doit etre chef
+    if request.user.role != 'chef':
+        return Response({"error": "Seul un chef peut affecter une région."}, status=403)
+
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response({"error": "Utilisateur introuvable."}, status=404)
+
+    if user.role != 'directeur_region':
+        return Response({"error": "Cible doit être directeur_region."}, status=400)
+
+    # 🔒 empêcher double affectation
+    if user.region_id:
+        return Response({"error": "Ce directeur a déjà une région."}, status=400)
+
+    region_id = request.data.get('region_id')
+    if not region_id:
+        return Response({"error": "region_id obligatoire."}, status=400)
+
+    # 🔐 récupérer token
+    headers = get_auth_headers(request)
+    if not headers:
+        return Response({"error": "Token manquant."}, status=401)
+
+    try:
+        base_url = discover_service(SERVICE_NAME)
+        url = f"{base_url}/params/regions/id/{region_id}"
+
+        resp = requests.get(url, headers=headers, timeout=3)
+
+        print("URL =", url)
+        print("STATUS =", resp.status_code)
+        print("BODY =", resp.text)
+
+        if resp.status_code == 404:
+            return Response({"error": "Région introuvable."}, status=404)
+
+        if resp.status_code != 200:
+            return Response({
+                "error": "Erreur service région",
+                "details": resp.text
+            }, status=502)
+
+        region = resp.json().get('data', {})
+
+        if not region.get('is_active', True):
+            return Response({"error": "Région inactive."}, status=400)
+
+    except requests.exceptions.RequestException:
+        return Response({"error": "Service région indisponible."}, status=503)
+
+    # ✅ Affectation
+    user.region_id = region_id
+    user.structure_id = None
+    user.save()
+
+    return Response({
+        "status": "success",
+        "message": f"Directeur affecté à la région {region.get('nom_region')}",
+        "user": UserSerializer(user).data
+    })
+@api_view(['PATCH'])
+def api_affecter_structure(request, user_id):
+
+    # 🔒 seul directeur peut affecter
+    if request.user.role != 'directeur_region':
+        return Response({"error": "Seul un directeur_region peut affecter une structure."}, status=403)
+
+    # 🔒 directeur doit avoir une région
+    if not request.user.region_id:
+        return Response({"error": "Vous devez être affecté à une région d'abord."}, status=400)
+
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response({"error": "Utilisateur introuvable."}, status=404)
+
+    if user.role != 'responsable_structure':
+        return Response({"error": "Cible doit être responsable_structure."}, status=400)
+
+    # 🔒 empêcher double affectation
+    if user.structure_id:
+        return Response({"error": "Ce responsable a déjà une structure."}, status=400)
+
+    structure_id = request.data.get('structure_id')
+    if not structure_id:
+        return Response({"error": "structure_id obligatoire."}, status=400)
+
+    region_id = request.user.region_id  # 🔥 IMPORTANT (hérité du directeur)
+
+    # 🔐 récupérer token
+    headers = get_auth_headers(request)
+    if not headers:
+        return Response({"error": "Token manquant."}, status=401)
+
+    try:
+        base_url = discover_service(SERVICE_NAME)
+
+        # 🔎 Vérifier structure
+        url_structure = f"{base_url}/params/structures/{structure_id}"
+        resp_s = requests.get(url_structure, headers=headers, timeout=3)
+
+        print("STRUCTURE URL =", url_structure)
+        print("STATUS =", resp_s.status_code)
+        print("BODY =", resp_s.text)
+
+        if resp_s.status_code == 404:
+            return Response({"error": "Structure introuvable."}, status=404)
+
+        if resp_s.status_code != 200:
+            return Response({
+                "error": "Erreur service structure",
+                "details": resp_s.text
+            }, status=502)
+
+        structure = resp_s.json().get('data', {})
+
+        # 🔥 Vérifier région correspondante
+        structure_region_id = structure.get('region', {}).get('_id')
+
+        if str(structure_region_id) != str(region_id):
+            return Response({
+                "error": "Structure hors de votre région.",
+                "directeur_region": region_id,
+                "structure_region": structure_region_id
+            }, status=400)
+            
+
+        if not structure.get('is_active', True):
+            return Response({"error": "Structure inactive."}, status=400)
+
+    except requests.exceptions.RequestException:
+        return Response({"error": "Service structure indisponible."}, status=503)
+
+    # ✅ Affectation
+    user.region_id = region_id
+    user.structure_id = structure_id
+    user.save()
+
+    return Response({
+        "status": "success",
+        "message": "Responsable affecté avec succès.",
+        "user": UserSerializer(user).data
     })
