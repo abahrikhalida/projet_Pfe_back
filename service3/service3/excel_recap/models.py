@@ -21,6 +21,7 @@ class BudgetRecord(models.Model):
     famille = models.CharField(max_length=50, blank=True, null=True)
     code_division = models.CharField(max_length=50, blank=True, null=True)
     libelle = models.CharField(max_length=255, blank=True, null=True)
+    annee = models.IntegerField(null=True, blank=True)  # ✅ ajouté
 
     cout_initial_total = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     cout_initial_dont_dex = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)

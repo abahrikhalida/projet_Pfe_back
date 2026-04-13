@@ -16,4 +16,7 @@ urlpatterns = [
     path('export/pdf/<int:pk>/', BudgetRecordPDFView.as_view(), name='budget-pdf'),
     path('region-famille/', RecapRegionFamilleView.as_view(), name='recap-region-famille'),
     path('verification/', VerificationCalculsView.as_view(), name='verification-calculs'),
+    path('budget/nouveau-projet/', CreateBudgetRecordManuelView.as_view(), name='create-budget-manuel'),
+    path('budget/projet/<str:code_division>/', BudgetRecordByCodeDivisionView.as_view()),
+
 ]

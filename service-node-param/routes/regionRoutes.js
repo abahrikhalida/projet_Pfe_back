@@ -11,6 +11,7 @@ router.use(authMiddleware);
 router.get('/',     regionController.getAllRegions);
 // router.get('/id/:id', regionController.getRegionById);
 
+router.get('/id/:id', regionController.getRegionById);
 router.get('/:code', regionController.getRegionByCode);
 
 // Routes réservées aux chefs/admins
