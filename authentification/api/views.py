@@ -682,7 +682,9 @@ def api_login(request):
         "access": str(refresh.access_token),
         "message": f"Logged in as {nom_complet(user)}",
         "nom_complet": nom_complet(user),
-        "photo_profil": user.photo_profil.url if user.photo_profil else None
+        "photo_profil": user.photo_profil.url if user.photo_profil else None,   # ✅
+        "region_id":    str(user.region_id)    if user.region_id    else None,   # ✅
+        "structure_id": str(user.structure_id) if user.structure_id else None,   # ✅
     })
 
 
