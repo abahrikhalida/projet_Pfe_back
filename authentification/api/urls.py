@@ -45,6 +45,8 @@ urlpatterns = [
     path('users/<int:user_id>/delete/', views.api_delete_user, name='api_delete_user'),  
     path('users/<int:user_id>/affecter-region/',    views.api_affecter_region,    name='affecter-region'),
     path('users/<int:user_id>/affecter-structure/', views.api_affecter_structure, name='affecter-structure'),
+    path('users/responsables-structure/', views.api_list_responsables_structure, name='list-responsables-structure'),
+    path('users/responsables-structure/affectes/', views.api_list_responsables_structure_affectes, name='list-responsables-affectes'),
 
 
     # Agents
