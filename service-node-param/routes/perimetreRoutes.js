@@ -8,7 +8,7 @@ router.use(authMiddleware);
 
 // Routes accessibles à tous les utilisateurs authentifiés
 router.get('/', perimetreController.getAllPerimetres);
-router.get('/id/:id', getPerimetreById);
+router.get('/id/:id', perimetreController.getPerimetreById);
 router.get('/:code', perimetreController.getPerimetreByCode);
 
 // Routes réservées aux chefs (authentifiés)

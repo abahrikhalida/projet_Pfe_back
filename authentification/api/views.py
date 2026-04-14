@@ -1490,3 +1490,35 @@ def api_affecter_structure(request, user_id):
         "message": "Responsable affecté avec succès.",
         "user": UserSerializer(user).data
     })
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def api_list_responsables_structure(request):
+    users = User.objects.filter(role='responsable_structure')
+    data = [{
+        "id": u.id,
+        "email": u.email,
+        "nom_complet": nom_complet(u),
+        "role": u.role,
+        "region_id": str(u.region_id) if u.region_id else None,
+        "structure_id": str(u.structure_id) if u.structure_id else None,
+        "photo_profil": u.photo_profil.url if u.photo_profil else None,
+        "is_active": u.is_active,
+    } for u in users]
+
+    return Response({"status": "success", "count": len(data), "users": data})
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def api_list_responsables_structure_affectes(request):
+    users = User.objects.filter(role='responsable_structure', structure_id__isnull=False)
+    data = [{
+        "id": u.id,
+        "email": u.email,
+        "nom_complet": nom_complet(u),
+        "role": u.role,
+        "region_id": str(u.region_id) if u.region_id else None,
+        "structure_id": str(u.structure_id) if u.structure_id else None,
+        "photo_profil": u.photo_profil.url if u.photo_profil else None,
+        "is_active": u.is_active,
+    } for u in users]
+
+    return Response({"status": "success", "count": len(data), "users": data})

@@ -33,24 +33,48 @@ class IsDirecteur(BasePermission):
         return get_role(request.user) == 'directeur'
 
 
-class IsVisionnaire(BasePermission):
+# class IsDiVisionnaire(BasePermission):
+#     def has_permission(self, request, view):
+#         return get_role(request.user) in ('directeur', 'divisionnaire')
+class IsDivisionnaire(BasePermission):
     def has_permission(self, request, view):
-        return get_role(request.user) in ('directeur', 'divisionnaire')
+        return get_role(request.user) == 'divisionnaire'
 
 
+
+# class IsChef(BasePermission):
+#     def has_permission(self, request, view):
+#         return get_role(request.user) in ('directeur', 'divisionnaire', 'chef')
 class IsChef(BasePermission):
     def has_permission(self, request, view):
-        return get_role(request.user) in ('directeur', 'divisionnaire', 'chef')
-
+        return get_role(request.user) == 'chef'
+# class IsAgent(BasePermission):
+#     def has_permission(self, request, view):
+#         return get_role(request.user) == 'agent'
 
 class IsAgent(BasePermission):
+    """Tous les rôles authentifiés"""
     def has_permission(self, request, view):
-        return get_role(request.user) in ('directeur', 'divisionnaire', 'chef', 'agent')
-
+        return get_role(request.user) in (
+            'directeur',
+            'directeur_region',
+            'divisionnaire',
+            'chef',
+            'responsable_structure',
+            'agent',
+        )
 class IsResponsableStructure(BasePermission):
     def has_permission(self, request, view):
         return (
             request.user
             and request.user.is_authenticated
             and getattr(request.user, 'role', None) == 'responsable_structure'
+        )
+# permissions.py — ajouter ce qui manque
+class IsDirecteurRegion(BasePermission):
+    def has_permission(self, request, view):
+        return (
+            request.user
+            and request.user.is_authenticated
+            and getattr(request.user, 'role', None) == 'directeur_region'
         )
