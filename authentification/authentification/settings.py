@@ -75,8 +75,9 @@ SIMPLE_JWT = {
 
 
 # System email that will send the agent's password email
-EMAIL_HOST_USER = 'k.abahri@esi-sba.dz'  # replace with your real system email
-EMAIL_HOST_PASSWORD = 'dapc ihjw ehjj ilek'  # Gmail app password
+EMAIL_HOST_USER = 'khalidakholoud472@gmail.com'  # replace with your real system email
+# EMAIL_HOST_PASSWORD = 'dapc ihjw ehjj ilek'
+EMAIL_HOST_PASSWORD = 'glkf olwk rodm atlx' # Gmail app password
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 
