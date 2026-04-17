@@ -18,5 +18,12 @@ urlpatterns = [
     path('verification/', VerificationCalculsView.as_view(), name='verification-calculs'),
     path('budget/nouveau-projet/', CreateBudgetRecordManuelView.as_view(), name='create-budget-manuel'),
     path('budget/projet/<str:code_division>/', BudgetRecordByCodeDivisionView.as_view()),
+    # validation
+    path('budget/soumettre/<int:record_id>/',                  SoumettreProjetView.as_view()),
+    path('budget/valider/directeur-region/<int:record_id>/',   ValiderDirecteurRegionView.as_view()),
+    path('budget/valider/chef/<int:record_id>/',               ValiderChefView.as_view()),
+    path('budget/valider/directeur/<int:record_id>/',          ValiderDirecteurView.as_view()),
+    path('budget/valider/divisionnaire/<int:record_id>/',      ValiderDivisionnnaireView.as_view()),
+    path('budget/statut/<int:record_id>/', StatutValidationView.as_view()),
 
 ]

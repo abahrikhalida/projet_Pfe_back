@@ -8,7 +8,7 @@ from .serializers import ExcelUploadSerializer, BudgetRecordSerializer, ExcelFil
 from .utils import auto_correct_records, parse_excel
 from .mappings import REGION_MAPPING, ACTIVITE_MAPPING, FAMILLE_ORDER, get_famille_nom
 from .discovery import discover_service
-
+from django.utils import timezone  # ✅ correct
 # External service URLs
 # SERVICE_1_URL = "http://localhost:8000"
 # SERVICE_2_URL = "http://localhost:8001"
@@ -560,7 +560,7 @@ from .mappings import REGION_MAPPING, ACTIVITE_MAPPING, get_famille_nom
 
 class BudgetRecordPDFView(APIView):
     authentication_classes = [RemoteJWTAuthentication]
-    permission_classes = [IsAgent]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
         record = get_object_or_404(BudgetRecord, pk=pk)
@@ -1449,3 +1449,407 @@ class BudgetRecordByCodeDivisionView(APIView):
             },
             'data': serializer.data
         })
+    from django.utils import timezone
+
+# ─────────────────────────────────────────
+# HELPER — récupérer record par id
+# ─────────────────────────────────────────
+def get_record_or_404(record_id):
+    try:
+        return BudgetRecord.objects.get(id=record_id)
+    except BudgetRecord.DoesNotExist:
+        return None
+
+
+# ─────────────────────────────────────────
+# ÉTAPE 0 — Soumettre (responsable structure)
+# ─────────────────────────────────────────
+class SoumettreProjetView(APIView):
+    """
+    POST /recap/budget/soumettre/<id>/
+    Responsable structure soumet le projet pour validation
+    Condition : statut = brouillon
+    """
+    authentication_classes = [RemoteJWTAuthentication]
+    permission_classes = [IsResponsableStructure]
+
+    def post(self, request, record_id):
+        record = get_record_or_404(record_id)
+        if not record:
+            return Response({'error': 'Projet introuvable'}, status=404)
+
+        if record.statut != 'brouillon':
+            return Response({
+                'error': f"Impossible de soumettre — statut actuel : '{record.statut}'"
+            }, status=400)
+
+        record.statut = 'soumis'
+        record.save()
+
+        return Response({
+            'success': True,
+            'message': 'Projet soumis pour validation',
+            'statut': record.statut
+        })
+
+
+# ─────────────────────────────────────────
+# ÉTAPE 1 — Validation Directeur Région
+# ─────────────────────────────────────────
+class ValiderDirecteurRegionView(APIView):
+    """
+    POST /recap/budget/valider/directeur-region/<id>/
+    Condition : statut = soumis
+    """
+    authentication_classes = [RemoteJWTAuthentication]
+    permission_classes = [IsDirecteurRegion]
+
+    def post(self, request, record_id):
+        record = get_record_or_404(record_id)
+        if not record:
+            return Response({'error': 'Projet introuvable'}, status=404)
+
+        action      = request.data.get('action')       # 'valider' ou 'rejeter'
+        commentaire = request.data.get('commentaire', '')
+
+        if action not in ['valider', 'rejeter']:
+            return Response({'error': "action doit être 'valider' ou 'rejeter'"}, status=400)
+
+        # ── Condition : doit être soumis ──
+        if record.statut != 'soumis':
+            return Response({
+                'error': f"Le projet doit être 'soumis' — statut actuel : '{record.statut}'"
+            }, status=400)
+
+        if action == 'valider':
+            record.statut                            = 'valide_directeur_region'
+            record.valide_par_directeur_region       = request.user.nom_complet
+            record.date_validation_directeur_region  = timezone.now()
+            record.commentaire_directeur_region      = commentaire
+            message = 'Projet validé par le directeur région'
+        else:
+            record.statut       = 'rejete'
+            record.rejete_par   = request.user.nom_complet
+            record.date_rejet   = timezone.now()
+            record.motif_rejet  = commentaire
+            message = 'Projet rejeté par le directeur région'
+
+        record.save()
+
+        return Response({
+            'success': True,
+            'message': message,
+            'statut':  record.statut
+        })
+
+
+# ─────────────────────────────────────────
+# ÉTAPE 2 — Validation Chef
+# ─────────────────────────────────────────
+class ValiderChefView(APIView):
+    """
+    POST /recap/budget/valider/chef/<id>/
+    Condition : statut = valide_directeur_region
+    """
+    authentication_classes = [RemoteJWTAuthentication]
+    permission_classes = [IsChef]
+
+    def post(self, request, record_id):
+        record = get_record_or_404(record_id)
+        if not record:
+            return Response({'error': 'Projet introuvable'}, status=404)
+
+        action      = request.data.get('action')
+        commentaire = request.data.get('commentaire', '')
+
+        if action not in ['valider', 'rejeter']:
+            return Response({'error': "action doit être 'valider' ou 'rejeter'"}, status=400)
+
+        # ── Condition : doit être validé par directeur région ──
+        if record.statut != 'valide_directeur_region':
+            return Response({
+                'error': f"Le projet doit être 'valide_directeur_region' — statut actuel : '{record.statut}'"
+            }, status=400)
+
+        if action == 'valider':
+            record.statut               = 'valide_chef'
+            record.valide_par_chef      = request.user.nom_complet
+            record.date_validation_chef = timezone.now()
+            record.commentaire_chef     = commentaire
+            message = 'Projet validé par le chef'
+        else:
+            record.statut      = 'rejete'
+            record.rejete_par  = request.user.nom_complet
+            record.date_rejet  = timezone.now()
+            record.motif_rejet = commentaire
+            message = 'Projet rejeté par le chef'
+
+        record.save()
+
+        return Response({
+            'success': True,
+            'message': message,
+            'statut':  record.statut
+        })
+
+
+# ─────────────────────────────────────────
+# ÉTAPE 3 — Validation Directeur
+# ─────────────────────────────────────────
+class ValiderDirecteurView(APIView):
+    """
+    POST /recap/budget/valider/directeur/<id>/
+    Condition : statut = valide_chef
+    """
+    authentication_classes = [RemoteJWTAuthentication]
+    permission_classes = [IsDirecteur]
+
+    def post(self, request, record_id):
+        record = get_record_or_404(record_id)
+        if not record:
+            return Response({'error': 'Projet introuvable'}, status=404)
+
+        action      = request.data.get('action')
+        commentaire = request.data.get('commentaire', '')
+
+        if action not in ['valider', 'rejeter']:
+            return Response({'error': "action doit être 'valider' ou 'rejeter'"}, status=400)
+
+        # ── Condition : doit être validé par chef ──
+        if record.statut != 'valide_chef':
+            return Response({
+                'error': f"Le projet doit être 'valide_chef' — statut actuel : '{record.statut}'"
+            }, status=400)
+
+        if action == 'valider':
+            record.statut                    = 'valide_directeur'
+            record.valide_par_directeur      = request.user.nom_complet
+            record.date_validation_directeur = timezone.now()
+            record.commentaire_directeur     = commentaire
+            message = 'Projet validé par le directeur'
+        else:
+            record.statut      = 'rejete'
+            record.rejete_par  = request.user.nom_complet
+            record.date_rejet  = timezone.now()
+            record.motif_rejet = commentaire
+            message = 'Projet rejeté par le directeur'
+
+        record.save()
+
+        return Response({
+            'success': True,
+            'message': message,
+            'statut':  record.statut
+        })
+
+
+# ─────────────────────────────────────────
+# ÉTAPE 4 — Validation Divisionnaire
+# ─────────────────────────────────────────
+class ValiderDivisionnnaireView(APIView):
+    """
+    POST /recap/budget/valider/divisionnaire/<id>/
+    Condition : statut = valide_directeur
+    """
+    authentication_classes = [RemoteJWTAuthentication]
+    permission_classes = [IsDivisionnaire]  # ton permission existant
+
+    def post(self, request, record_id):
+        record = get_record_or_404(record_id)
+        if not record:
+            return Response({'error': 'Projet introuvable'}, status=404)
+
+        action      = request.data.get('action')
+        commentaire = request.data.get('commentaire', '')
+
+        if action not in ['valider', 'rejeter']:
+            return Response({'error': "action doit être 'valider' ou 'rejeter'"}, status=400)
+
+        # ── Condition : doit être validé par directeur ──
+        if record.statut != 'valide_directeur':
+            return Response({
+                'error': f"Le projet doit être 'valide_directeur' — statut actuel : '{record.statut}'"
+            }, status=400)
+
+        if action == 'valider':
+            record.statut                        = 'valide_divisionnaire'
+            record.valide_par_divisionnaire      = request.user.nom_complet
+            record.date_validation_divisionnaire = timezone.now()
+            record.commentaire_divisionnaire     = commentaire
+            message = 'Projet validé par le divisionnaire — validation complète ✅'
+        else:
+            record.statut      = 'rejete'
+            record.rejete_par  = request.user.nom_complet
+            record.date_rejet  = timezone.now()
+            record.motif_rejet = commentaire
+            message = 'Projet rejeté par le divisionnaire'
+
+        record.save()
+
+        return Response({
+            'success': True,
+            'message': message,
+            'statut':  record.statut
+        })
+    # ─────────────────────────────────────────
+# GET — Statut complet du workflow de validation
+# ─────────────────────────────────────────
+class StatutValidationView(APIView):
+    """
+    GET /recap/budget/statut/<record_id>/
+    Retourne le statut complet du workflow de validation
+    Accessible par tous les rôles
+    """
+    authentication_classes = [RemoteJWTAuthentication]
+    permission_classes = [IsAgent]
+
+    def get(self, request, record_id):
+        record = get_record_or_404(record_id)
+        if not record:
+            return Response({'error': 'Projet introuvable'}, status=404)
+
+        # ── Progression du workflow ──
+        WORKFLOW = [
+            'brouillon',
+            'soumis',
+            'valide_directeur_region',
+            'valide_chef',
+            'valide_directeur',
+            'valide_divisionnaire',
+        ]
+
+        statut_actuel = record.statut
+        est_rejete    = statut_actuel == 'rejete'
+
+        # Calculer la progression
+        if est_rejete:
+            progression = 0
+        else:
+            try:
+                etape_actuelle = WORKFLOW.index(statut_actuel)
+                progression    = round((etape_actuelle / (len(WORKFLOW) - 1)) * 100)
+            except ValueError:
+                progression = 0
+
+        # ── Étapes détaillées ──
+        etapes = [
+            {
+                'etape':       0,
+                'label':       'Création',
+                'role':        'responsable_structure',
+                'statut_cible': 'brouillon',
+                'fait':        True,
+                'date':        None,
+                'par':         None,
+                'commentaire': None,
+            },
+            {
+                'etape':        1,
+                'label':        'Soumission',
+                'role':         'responsable_structure',
+                'statut_cible': 'soumis',
+                'fait':         statut_actuel in (
+                                    'soumis',
+                                    'valide_directeur_region',
+                                    'valide_chef',
+                                    'valide_directeur',
+                                    'valide_divisionnaire'
+                                ),
+                'date':         None,
+                'par':          None,
+                'commentaire':  None,
+            },
+            {
+                'etape':        2,
+                'label':        'Validation Directeur Région',
+                'role':         'directeur_region',
+                'statut_cible': 'valide_directeur_region',
+                'fait':         statut_actuel in (
+                                    'valide_directeur_region',
+                                    'valide_chef',
+                                    'valide_directeur',
+                                    'valide_divisionnaire'
+                                ),
+                'date':         record.date_validation_directeur_region,
+                'par':          record.valide_par_directeur_region,
+                'commentaire':  record.commentaire_directeur_region,
+            },
+            {
+                'etape':        3,
+                'label':        'Validation Chef',
+                'role':         'chef',
+                'statut_cible': 'valide_chef',
+                'fait':         statut_actuel in (
+                                    'valide_chef',
+                                    'valide_directeur',
+                                    'valide_divisionnaire'
+                                ),
+                'date':         record.date_validation_chef,
+                'par':          record.valide_par_chef,
+                'commentaire':  record.commentaire_chef,
+            },
+            {
+                'etape':        4,
+                'label':        'Validation Directeur',
+                'role':         'directeur',
+                'statut_cible': 'valide_directeur',
+                'fait':         statut_actuel in (
+                                    'valide_directeur',
+                                    'valide_divisionnaire'
+                                ),
+                'date':         record.date_validation_directeur,
+                'par':          record.valide_par_directeur,
+                'commentaire':  record.commentaire_directeur,
+            },
+            {
+                'etape':        5,
+                'label':        'Validation Divisionnaire',
+                'role':         'divisionnaire',
+                'statut_cible': 'valide_divisionnaire',
+                'fait':         statut_actuel == 'valide_divisionnaire',
+                'date':         record.date_validation_divisionnaire,
+                'par':          record.valide_par_divisionnaire,
+                'commentaire':  record.commentaire_divisionnaire,
+            },
+        ]
+
+        # ── Prochaine étape ──
+        prochaine_etape = None
+        if not est_rejete and statut_actuel != 'valide_divisionnaire':
+            mapping_prochaine = {
+                'brouillon':               {'action': 'Soumettre',                  'role': 'responsable_structure', 'url': f'/recap/budget/soumettre/{record_id}/'},
+                'soumis':                  {'action': 'Valider (Directeur Région)', 'role': 'directeur_region',      'url': f'/recap/budget/valider/directeur-region/{record_id}/'},
+                'valide_directeur_region': {'action': 'Valider (Chef)',             'role': 'chef',                  'url': f'/recap/budget/valider/chef/{record_id}/'},
+                'valide_chef':             {'action': 'Valider (Directeur)',        'role': 'directeur',             'url': f'/recap/budget/valider/directeur/{record_id}/'},
+                'valide_directeur':        {'action': 'Valider (Divisionnaire)',    'role': 'divisionnaire',         'url': f'/recap/budget/valider/divisionnaire/{record_id}/'},
+            }
+            prochaine_etape = mapping_prochaine.get(statut_actuel)
+
+        return Response({
+            'success': True,
+            'projet': {
+                'id':            record.id,
+                'code_division': record.code_division,
+                'libelle':       record.libelle,
+                'region':        record.region,
+                'annee':         record.annee,
+            },
+            'validation': {
+                'statut_actuel':   statut_actuel,
+                'est_valide':      statut_actuel == 'valide_divisionnaire',
+                'est_rejete':      est_rejete,
+                'progression':     f"{progression}%",
+                'prochaine_etape': prochaine_etape,
+
+                # Rejet info
+                'rejet': {
+                    'rejete_par':  record.rejete_par,
+                    'date_rejet':  record.date_rejet,
+                    'motif':       record.motif_rejet,
+                } if est_rejete else None,
+
+                # Workflow complet
+                'etapes': etapes,
+            }
+        })
+
